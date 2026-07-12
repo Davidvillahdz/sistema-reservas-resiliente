@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+
+# Variables de entorno
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Coverage y pruebas
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Archivos temporales
+*.tmp
+*.swp
+
+# Kubernetes y secretos locales
+kubeconfig
+*.key
+*.pem
+
+# Evidencias pesadas
+evidence/videos/

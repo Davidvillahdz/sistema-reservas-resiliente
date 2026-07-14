@@ -6,6 +6,10 @@ from uuid import uuid4
 import httpx
 from fastapi import FastAPI, HTTPException, status
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import SQLAlchemyError
+
+from database import SessionLocal
+from models import Reservation
 
 
 app = FastAPI(
@@ -117,13 +121,43 @@ async def create_reservation(
 
     inventory_data = inventory_response.json()
 
+    reservation_id = uuid4()
+    created_at = datetime.now(timezone.utc)
+
+    db = SessionLocal()
+
+    try:
+        reservation = Reservation(
+            id=reservation_id,
+            customer_name=request.customer_name,
+            customer_email=request.customer_email,
+            event_id=request.event_id,
+            quantity=request.quantity,
+            status="inventory_confirmed",
+            created_at=created_at,
+        )
+
+        db.add(reservation)
+        db.commit()
+
+    except SQLAlchemyError as exc:
+        db.rollback()
+
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No fue posible guardar la reserva en PostgreSQL",
+        ) from exc
+
+    finally:
+        db.close()
+
     return ReservationResponse(
-        reservation_id=str(uuid4()),
+        reservation_id=str(reservation_id),
         customer_name=request.customer_name,
         customer_email=request.customer_email,
         event_id=request.event_id,
         quantity=request.quantity,
         remaining_inventory=inventory_data["remaining"],
         status="inventory_confirmed",
-        created_at=datetime.now(timezone.utc),
+        created_at=created_at,
     )

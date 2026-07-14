@@ -27,6 +27,8 @@ services:
     container_name: api-gateway
     ports:
       - "8000:8000"
+    environment:
+      RESERVATION_URL: http://reservas:8001
     depends_on:
       reservas:
         condition: service_started

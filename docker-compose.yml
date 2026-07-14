@@ -1,0 +1,93 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: reservas-postgres
+    environment:
+      POSTGRES_DB: reservas_db
+      POSTGRES_USER: reservas_user
+      POSTGRES_PASSWORD: reservas_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./services/database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U reservas_user -d reservas_db
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - reservas-network
+
+  api-gateway:
+    build:
+      context: ./services/api-gateway
+    container_name: api-gateway
+    ports:
+      - "8000:8000"
+    environment:
+      RESERVATION_URL: http://reservas:8001
+    depends_on:
+      reservas:
+        condition: service_started
+    networks:
+      - reservas-network
+
+  reservas:
+    build:
+      context: ./services/reservas
+    container_name: reservas
+    ports:
+      - "8001:8001"
+    environment:
+      INVENTORY_URL: http://inventario:8002
+      PAYMENT_URL: http://pagos:8003
+      NOTIFICATION_URL: http://notificaciones:8004
+      DATABASE_URL: postgresql://reservas_user:reservas_password@postgres:5432/reservas_db
+    depends_on:
+      postgres:
+        condition: service_healthy
+      inventario:
+        condition: service_started
+      pagos:
+        condition: service_started
+      notificaciones:
+        condition: service_started
+    networks:
+      - reservas-network
+
+  inventario:
+    build:
+      context: ./services/inventario
+    container_name: inventario
+    ports:
+      - "8002:8002"
+    networks:
+      - reservas-network
+
+  pagos:
+    build:
+      context: ./services/pagos
+    container_name: pagos
+    ports:
+      - "8003:8003"
+    networks:
+      - reservas-network
+
+  notificaciones:
+    build:
+      context: ./services/notificaciones
+    container_name: notificaciones
+    ports:
+      - "8004:8004"
+    networks:
+      - reservas-network
+
+volumes:
+  postgres_data:
+
+networks:
+  reservas-network:
+    driver: bridge

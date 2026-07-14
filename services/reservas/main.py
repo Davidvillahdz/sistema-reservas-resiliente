@@ -1,7 +1,9 @@
+import os
 from datetime import datetime, timezone
 from typing import Literal
 from uuid import uuid4
 
+import httpx
 from fastapi import FastAPI, HTTPException, status
 from pydantic import BaseModel, Field
 
@@ -9,7 +11,12 @@ from pydantic import BaseModel, Field
 app = FastAPI(
     title="Servicio de Reservas",
     description="Servicio principal para procesar reservas de entradas.",
-    version="1.0.0",
+    version="1.1.0",
+)
+
+INVENTORY_URL = os.getenv(
+    "INVENTORY_URL",
+    "http://localhost:8002",
 )
 
 
@@ -26,7 +33,8 @@ class ReservationResponse(BaseModel):
     customer_email: str
     event_id: int
     quantity: int
-    status: Literal["created"]
+    remaining_inventory: int
+    status: Literal["inventory_confirmed"]
     created_at: datetime
 
 
@@ -52,18 +60,62 @@ def health_check() -> dict[str, str]:
     response_model=ReservationResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def create_reservation(request: ReservationRequest) -> ReservationResponse:
+async def create_reservation(
+    request: ReservationRequest,
+) -> ReservationResponse:
     """
-    Crea una reserva básica.
+    Crea una reserva después de confirmar y descontar inventario.
+    """
 
-    En esta primera versión todavía no consulta inventario,
-    pagos, notificaciones ni PostgreSQL.
-    """
-    if request.customer_email.strip() == "":
+    inventory_endpoint = (
+        f"{INVENTORY_URL}/inventory/"
+        f"{request.event_id}/discount"
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            inventory_response = await client.post(
+                inventory_endpoint,
+                json={"quantity": request.quantity},
+            )
+
+    except httpx.TimeoutException as exc:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="El correo del cliente es obligatorio",
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="El Servicio de Inventario tardó demasiado en responder",
+        ) from exc
+
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="El Servicio de Inventario no está disponible",
+        ) from exc
+
+    if inventory_response.status_code == 404:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="El evento solicitado no existe",
         )
+
+    if inventory_response.status_code == 409:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No existe inventario suficiente",
+        )
+
+    if inventory_response.status_code >= 500:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="El Servicio de Inventario presentó un error",
+        )
+
+    if inventory_response.status_code != 200:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Respuesta inesperada del Servicio de Inventario",
+        )
+
+    inventory_data = inventory_response.json()
 
     return ReservationResponse(
         reservation_id=str(uuid4()),
@@ -71,6 +123,7 @@ def create_reservation(request: ReservationRequest) -> ReservationResponse:
         customer_email=request.customer_email,
         event_id=request.event_id,
         quantity=request.quantity,
-        status="created",
+        remaining_inventory=inventory_data["remaining"],
+        status="inventory_confirmed",
         created_at=datetime.now(timezone.utc),
     )

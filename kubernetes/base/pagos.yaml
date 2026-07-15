@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pagos
+  namespace: reservas-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pagos
+  template:
+    metadata:
+      labels:
+        app: pagos
+    spec:
+      containers:
+        - name: pagos
+          image: sistema-reservas-resiliente-pagos:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8003
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8003
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8003
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pagos-service
+  namespace: reservas-app
+spec:
+  selector:
+    app: pagos
+  ports:
+    - port: 8003
+      targetPort: 8003

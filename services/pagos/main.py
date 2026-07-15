@@ -1,4 +1,5 @@
 import asyncio
+import os
 import random
 from typing import Literal
 from uuid import uuid4
@@ -9,8 +10,17 @@ from pydantic import BaseModel, Field
 
 app = FastAPI(
     title="Servicio de Pagos",
-    description="Servicio simulado que procesa pagos con latencia y fallos controlados.",
-    version="1.0.0",
+    description="Servicio simulado con latencia y fallos controlados.",
+    version="1.1.0",
+)
+
+FORCE_SLOW_PAYMENT = os.getenv(
+    "FORCE_SLOW_PAYMENT",
+    "false",
+).lower() == "true"
+
+SLOW_PAYMENT_SECONDS = float(
+    os.getenv("SLOW_PAYMENT_SECONDS", "20")
 )
 
 
@@ -45,22 +55,28 @@ def health_check() -> dict[str, str]:
     }
 
 
+@app.get("/simulation")
+def simulation_status() -> dict[str, bool | float]:
+    return {
+        "force_slow_payment": FORCE_SLOW_PAYMENT,
+        "slow_payment_seconds": SLOW_PAYMENT_SECONDS,
+    }
+
+
 @app.post(
     "/payments",
     response_model=PaymentResponse,
     status_code=status.HTTP_201_CREATED,
 )
 async def process_payment(request: PaymentRequest) -> PaymentResponse:
-    """
-    Simula un proveedor externo de pagos.
+    if FORCE_SLOW_PAYMENT:
+        delay = SLOW_PAYMENT_SECONDS
+    else:
+        delay = round(random.uniform(1.0, 4.0), 2)
 
-    - Introduce una latencia aleatoria entre 1 y 4 segundos.
-    - Tiene una probabilidad aproximada del 20 % de fallar.
-    """
-    delay = round(random.uniform(1.0, 4.0), 2)
     await asyncio.sleep(delay)
 
-    if random.random() < 0.20:
+    if not FORCE_SLOW_PAYMENT and random.random() < 0.20:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="La pasarela de pagos no se encuentra disponible",

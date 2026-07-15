@@ -1,606 +1,225 @@
-\# Sistema de Reservas Resiliente
+# Sistema de Reservas Resiliente
 
+Sistema distribuido de reservas de entradas desarrollado para demostrar mecanismos de tolerancia a fallos en una arquitectura de microservicios.
 
+El proyecto implementa patrones de resiliencia como **Circuit Breaker**, **reintentos con backoff exponencial**, **timeouts**, **fallback** y **Bulkhead**. También incluye manifiestos de Kubernetes y evidencias de pruebas controladas sobre un clúster multinodo.
 
-Sistema distribuido desarrollado para demostrar mecanismos de tolerancia a fallos utilizando microservicios desplegados sobre Kubernetes.
+## Integrantes
 
+- David Villa Hernández
+- Juan Fernando Álvarez Picón
 
+Universidad Politécnica Salesiana — Computación, 2026.
 
-\---
+## Objetivo
 
+Diseñar, implementar y desplegar un sistema de reservas capaz de mantener un comportamiento controlado ante la caída, lentitud o saturación de sus servicios.
 
+## Arquitectura
 
-\# Integrantes
-
-
-
-\- David Villa Hernández
-
-\- Juan Fernando Álvarez Picón
-
-
-
-\---
-
-
-
-\# Objetivo
-
-
-
-Diseñar, implementar y desplegar un sistema de reservas de entradas basado en microservicios que sea capaz de mantener su disponibilidad ante diferentes escenarios de fallo.
-
-
-
-El proyecto implementa mecanismos de resiliencia ampliamente utilizados en arquitecturas distribuidas modernas y demuestra su funcionamiento mediante pruebas controladas sobre un clúster Kubernetes multinodo.
-
-
-
-\---
-
-
-
-\# Arquitectura del sistema
-
-
-
-El sistema está compuesto por los siguientes microservicios:
-
-
-
-\- API Gateway
-
-\- Servicio de Reservas
-
-\- Servicio de Inventario
-
-\- Servicio de Pagos
-
-\- Servicio de Notificaciones
-
-\- PostgreSQL
-
-
-
-Flujo general:
-
-
-
+```mermaid
+flowchart TD
+    Client[Cliente] --> Gateway[API Gateway]
+    Gateway --> Reservations[Servicio de Reservas]
+    Reservations --> Inventory[Servicio de Inventario]
+    Reservations --> Payments[Servicio de Pagos]
+    Reservations --> Database[(PostgreSQL)]
+    Notifications[Servicio de Notificaciones]
 ```
 
-Cliente
+| Componente | Puerto | Responsabilidad |
+| --- | ---: | --- |
+| API Gateway | `8000` | Punto de entrada y límite de solicitudes concurrentes |
+| Reservas | `8001` | Orquestación de inventario, pago y persistencia |
+| Inventario | `8002` | Consulta y descuento de entradas |
+| Pagos | `8003` | Simulación de pagos, latencia y fallos |
+| Notificaciones | `8004` | Simulación del envío de notificaciones |
+| PostgreSQL | `5432` | Persistencia de reservas |
 
-&#x20;  │
+> **Nota:** el servicio de Notificaciones está implementado y desplegado como servicio independiente, pero todavía no forma parte del flujo de creación de una reserva.
 
-&#x20;  ▼
+## Tecnologías
 
-API Gateway
+- Python 3.12
+- FastAPI y Uvicorn
+- PostgreSQL 17
+- SQLAlchemy
+- Docker y Docker Compose
+- Kubernetes, `kubectl` y kind
+- k6
 
-&#x20;  │
+## Estructura del proyecto
 
-&#x20;  ▼
-
-Servicio de Reservas
-
-&#x20;  ├────────► Inventario
-
-&#x20;  ├────────► Pagos
-
-&#x20;  ├────────► Notificaciones
-
-&#x20;  │
-
-&#x20;  ▼
-
-PostgreSQL
-
-```
-
-
-
-\---
-
-
-
-\# Tecnologías utilizadas
-
-
-
-\- Python 3.12
-
-\- FastAPI
-
-\- PostgreSQL
-
-\- SQLAlchemy
-
-\- Docker
-
-\- Docker Compose
-
-\- Kubernetes
-
-\- kind
-
-\- k6
-
-\- PowerShell
-
-
-
-\---
-
-
-
-\# Estructura del proyecto
-
-
-
-```
-
+```text
 .
-
-├── services/
-
-│   ├── api-gateway/
-
-│   ├── reservas/
-
-│   ├── inventario/
-
-│   ├── pagos/
-
-│   └── notificaciones/
-
-│
-
+├── docs/                  # Documentación complementaria
+├── evidence/              # Resultados de las pruebas de resiliencia
 ├── kubernetes/
-
-│   ├── base/
-
-│   ├── chaos/
-
-│   └── cluster/
-
-│
-
+│   ├── base/              # Manifiestos de la aplicación
+│   └── cluster/           # Configuración del clúster kind
 ├── scripts/
-
-│   ├── load/
-
-│   ├── demo/
-
-│   └── concurrency/
-
-│
-
-├── evidence/
-
-│
-
-└── docker-compose.yml
-
+│   └── load/              # Prueba de carga con k6
+├── services/
+│   ├── api-gateway/
+│   ├── database/
+│   ├── inventario/
+│   ├── notificaciones/
+│   ├── pagos/
+│   └── reservas/
+├── docker-compose.yml
+└── README.md
 ```
 
+## Inicio rápido con Docker Compose
 
+### Requisitos
 
-\---
+- Docker Desktop con Docker Compose
+- Git, si se va a clonar el repositorio
 
-
-
-\# Requisitos
-
-
-
-Antes de ejecutar el proyecto es necesario instalar:
-
-
-
-\- Docker Desktop
-
-\- Kubernetes (kubectl)
-
-\- kind
-
-\- Python 3.12
-
-\- Git
-
-\- k6
-
-
-
-\---
-
-
-
-\# Construcción de imágenes
-
-
-
-Cada microservicio debe construirse mediante Docker.
-
-
-
-Ejemplo:
-
-
+### 1. Clonar el repositorio
 
 ```bash
-
-docker build -t sistema-reservas-resiliente-api-gateway ./services/api-gateway
-
-docker build -t sistema-reservas-resiliente-reservas ./services/reservas
-
-docker build -t sistema-reservas-resiliente-inventario ./services/inventario
-
-docker build -t sistema-reservas-resiliente-pagos ./services/pagos
-
-docker build -t sistema-reservas-resiliente-notificaciones ./services/notificaciones
-
+git clone https://github.com/Davidvillahdz/sistema-reservas-resiliente.git
+cd sistema-reservas-resiliente
 ```
 
-
-
-Posteriormente las imágenes se cargan al clúster kind.
-
-
-
-Ejemplo:
-
-
+### 2. Construir e iniciar los servicios
 
 ```bash
-
-kind load docker-image sistema-reservas-resiliente-api-gateway:latest --name reservas-cluster
-
+docker compose up --build -d
 ```
 
-
-
-\---
-
-
-
-\# Despliegue en Kubernetes
-
-
-
-Crear el clúster:
-
-
+### 3. Comprobar el estado
 
 ```bash
-
-kind create cluster --config kubernetes/cluster/kind-config.yaml
-
+docker compose ps
 ```
 
+La documentación interactiva del API Gateway queda disponible en:
 
+- Swagger UI: <http://localhost:8000/docs>
+- Estado del servicio: <http://localhost:8000/health>
+- Estado del Bulkhead: <http://localhost:8000/bulkhead/status>
 
-Aplicar los recursos:
-
-
+### 4. Crear una reserva
 
 ```bash
-
-kubectl apply -k kubernetes/base
-
+curl -X POST http://localhost:8000/reservations \
+  -H "Content-Type: application/json" \
+  -d '{
+    "customer_name": "David Villa",
+    "customer_email": "david@example.com",
+    "event_id": 1,
+    "quantity": 1
+  }'
 ```
 
+En PowerShell también se puede usar:
 
+```powershell
+$body = @{
+    customer_name  = "David Villa"
+    customer_email = "david@example.com"
+    event_id       = 1
+    quantity       = 1
+} | ConvertTo-Json
 
-Comprobar el estado:
+Invoke-RestMethod `
+    -Method Post `
+    -Uri "http://localhost:8000/reservations" `
+    -ContentType "application/json" `
+    -Body $body
+```
 
-
+### 5. Detener el entorno
 
 ```bash
-
-kubectl get nodes
-
-
-
-kubectl get deployments -n reservas-app
-
-
-
-kubectl get pods -n reservas-app
-
-
-
-kubectl get services -n reservas-app
-
+docker compose down
 ```
 
+Para eliminar también el volumen de PostgreSQL:
 
-
-\---
-
-
-
-\# Prueba funcional
-
-
-
-Crear una reserva mediante el API Gateway.
-
-
-
-Ejemplo:
-
-
-
-```http
-
-POST /reservations
-
+```bash
+docker compose down -v
 ```
 
+## Kubernetes
 
+El proyecto incluye una configuración kind de tres nodos —un nodo de control y dos trabajadores— en [`kubernetes/cluster/kind-config.yaml`](kubernetes/cluster/kind-config.yaml).
 
-```json
+Los recursos de la aplicación están disponibles en [`kubernetes/base/`](kubernetes/base/). Incluyen Deployments, Services, sondas de salud, límites de recursos, afinidad de Pods, configuración de PostgreSQL y un volumen persistente.
 
-{
+> Los manifiestos de Kubernetes se conservan como parte de las pruebas realizadas. Antes de crear un entorno nuevo se deben revisar sus nombres de recursos y etiquetas de imágenes para que coincidan con las imágenes construidas localmente.
 
-&#x20;   "customer\_name": "David Villa",
+## Mecanismos de resiliencia
 
-&#x20;   "customer\_email": "d01072004@gmail.com",
+### 1. Recuperación ante la caída de un Pod
 
-&#x20;   "event\_id": 1,
+Kubernetes recrea automáticamente un Pod eliminado y mantiene las réplicas declaradas mediante un Deployment y su ReplicaSet.
 
-&#x20;   "quantity": 1
+**Mecanismos:** Deployment y ReplicaSet.
 
-}
+[Ver evidencia de la prueba](evidence/prueba-caida-pod-reservas.md)
 
+### 2. Inventario Fantasma
+
+Cuando Inventario deja de responder, Reservas evita llamadas indefinidas mediante un timeout, tres intentos con backoff exponencial y un Circuit Breaker.
+
+El circuito se abre después de tres fallos y entra en recuperación después de 15 segundos.
+
+**Mecanismos:** Circuit Breaker, timeout, reintentos y backoff exponencial.
+
+[Ver evidencia de la prueba](evidence/prueba-inventario-fantasma.md)
+
+### 3. Pasarela Lenta
+
+Si Pagos supera el timeout de tres segundos, la reserva se persiste con el estado `payment_pending` para que la operación pueda continuar.
+
+**Mecanismos:** timeout y fallback.
+
+[Ver evidencia de la prueba](evidence/prueba-pasarela-lenta.md)
+
+### 4. Diluvio de Peticiones
+
+El API Gateway limita a cinco las solicitudes concurrentes por réplica. Cuando se alcanza ese límite, responde con `HTTP 429 Too Many Requests` y el encabezado `Retry-After`.
+
+**Mecanismo:** Bulkhead.
+
+[Ver evidencia de la prueba](evidence/prueba-diluvio-peticiones.md)
+
+## Prueba de carga
+
+La prueba de k6 utiliza 30 usuarios virtuales durante 20 segundos:
+
+```bash
+k6 run scripts/load/request-storm.js
 ```
 
+El script está configurado para acceder a `http://localhost:8080`. Si el API Gateway se ejecuta mediante Docker Compose en el puerto `8000`, se debe actualizar temporalmente esa URL o establecer el reenvío de puertos correspondiente.
 
+## Resultados
 
-\---
+Las pruebas documentadas muestran que:
 
+- Kubernetes recupera Pods eliminados y restablece el número de réplicas.
+- El Circuit Breaker evita llamadas repetidas hacia Inventario durante una caída.
+- El timeout y el fallback permiten persistir reservas cuando Pagos responde lentamente.
+- El Bulkhead rechaza carga excedente de forma controlada con respuestas HTTP 429.
+- PostgreSQL conserva las reservas creadas.
 
+## Documentación adicional
 
-\# Escenarios de tolerancia a fallos implementados
+- [Catálogo de fallos](docs/catalogo-fallos.md)
+- [Distribución del trabajo](docs/distribucion-trabajo.md)
+- [Evidencias de las pruebas](evidence/)
 
+## Autores
 
+**David Villa Hernández**
 
-\## 1. Caída de un Pod
-
-
-
-Se elimina manualmente un Pod del Servicio de Reservas para verificar que Kubernetes cree automáticamente una nueva réplica sin afectar la disponibilidad del sistema.
-
-
-
-\*\*Mecanismo utilizado\*\*
-
-
-
-\- ReplicaSet
-
-\- Deployment
-
-
-
-\---
-
-
-
-\## 2. Inventario Fantasma
-
-
-
-Se simula la caída del Servicio de Inventario.
-
-
-
-El Servicio de Reservas utiliza un Circuit Breaker para evitar llamadas repetidas a un servicio que se encuentra fallando.
-
-
-
-\*\*Mecanismo utilizado\*\*
-
-
-
-\- Circuit Breaker
-
-\- Reintentos
-
-\- Backoff exponencial
-
-
-
-\---
-
-
-
-\## 3. Pasarela Lenta
-
-
-
-Se introduce una demora artificial en el Servicio de Pagos.
-
-
-
-Cuando el tiempo de espera es superado, el Servicio de Reservas registra la reserva con estado:
-
-
-
-```
-
-payment\_pending
-
-```
-
-
-
-permitiendo que la operación continúe.
-
-
-
-\*\*Mecanismos utilizados\*\*
-
-
-
-\- Timeout
-
-\- Fallback
-
-
-
-\---
-
-
-
-\## 4. Diluvio de Peticiones
-
-
-
-Se genera una carga masiva utilizando k6.
-
-
-
-El API Gateway limita el número de solicitudes concurrentes mediante un Bulkhead.
-
-
-
-Cuando el límite es alcanzado responde con:
-
-
-
-```
-
-HTTP 429
-
-```
-
-
-
-sin comprometer la estabilidad del sistema.
-
-
-
-\*\*Mecanismo utilizado\*\*
-
-
-
-\- Bulkhead
-
-
-
-\---
-
-
-
-\# Evidencias
-
-
-
-Las pruebas realizadas se encuentran documentadas en la carpeta:
-
-
-
-```
-
-evidence/
-
-```
-
-
-
-Incluye:
-
-
-
-\- prueba-caida-pod-reservas.md
-
-\- prueba-inventario-fantasma.md
-
-\- prueba-pasarela-lenta.md
-
-\- prueba-diluvio-peticiones.md
-
-
-
-\---
-
-
-
-\# Resultados obtenidos
-
-
-
-Durante las pruebas se comprobó que:
-
-
-
-\- Kubernetes recupera automáticamente Pods eliminados.
-
-\- El Circuit Breaker evita llamadas repetidas hacia servicios caídos.
-
-\- El timeout y el fallback permiten continuar el flujo de negocio ante servicios lentos.
-
-\- El Bulkhead protege al API Gateway frente a grandes volúmenes de solicitudes.
-
-\- PostgreSQL mantiene la persistencia de las reservas.
-
-\- El sistema conserva su disponibilidad durante los escenarios de fallo.
-
-
-
-\---
-
-
-
-\# Conclusiones
-
-
-
-La implementación permitió comprobar la importancia de aplicar mecanismos de resiliencia en sistemas distribuidos.
-
-
-
-Cada estrategia implementada protege un tipo diferente de fallo:
-
-
-
-\- Kubernetes garantiza la alta disponibilidad mediante la recreación automática de Pods.
-
-\- Circuit Breaker evita fallos en cascada.
-
-\- Timeout y Fallback reducen el impacto de servicios con alta latencia.
-
-\- Bulkhead limita el consumo de recursos y evita la saturación del sistema.
-
-
-
-La combinación de estos mecanismos incrementa significativamente la disponibilidad y confiabilidad de la aplicación.
-
-
-
-\---
-
-
-
-\# Autores
-
-
-
-\*\*David Villa Hernández\*\*
-
-
-
-\*\*Juan Fernando Álvarez Picón\*\*
-
-
+**Juan Fernando Álvarez Picón**
 
 Universidad Politécnica Salesiana
 
-
-
-Computación
-
-
-
-2026
-
+Carrera de Computación — 2026

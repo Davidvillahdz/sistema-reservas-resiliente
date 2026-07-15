@@ -15,10 +15,15 @@ spec:
     spec:
       containers:
         - name: pagos
-          image: sistema-reservas-resiliente-pagos:latest
+          image: sistema-reservas-resiliente-pagos:slow-v1
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8003
+          env:
+            - name: FORCE_SLOW_PAYMENT
+              value: "true"
+            - name: SLOW_PAYMENT_SECONDS
+              value: "20"
           readinessProbe:
             httpGet:
               path: /health

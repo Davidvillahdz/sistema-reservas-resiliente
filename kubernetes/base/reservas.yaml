@@ -1,81 +1,63 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: reservas
+  name: pagos
   namespace: reservas-app
+
 spec:
-  replicas: 2
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxUnavailable: 1
-      maxSurge: 0
+  replicas: 1
+
   selector:
     matchLabels:
-      app: reservas
+      app: pagos
+
   template:
     metadata:
       labels:
-        app: reservas
+        app: pagos
+
     spec:
       containers:
-        - name: reservas
-          image: sistema-reservas-resiliente-reservas:cb-v1
+        - name: pagos
+          image: sistema-reservas-resiliente-pagos:slow-v1
           imagePullPolicy: IfNotPresent
+
           ports:
-            - containerPort: 8001
+            - containerPort: 8003
+
           env:
-            - name: INVENTORY_URL
-              valueFrom:
-                configMapKeyRef:
-                  name: reservas-config
-                  key: INVENTORY_URL
-            - name: PAYMENT_URL
-              valueFrom:
-                configMapKeyRef:
-                  name: reservas-config
-                  key: PAYMENT_URL
-            - name: NOTIFICATION_URL
-              valueFrom:
-                configMapKeyRef:
-                  name: reservas-config
-                  key: NOTIFICATION_URL
-            - name: DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: postgres-secret
-                  key: DATABASE_URL
+            - name: FORCE_SLOW_PAYMENT
+              value: "true"
+
+            - name: SLOW_PAYMENT_SECONDS
+              value: "20"
+
           readinessProbe:
             httpGet:
               path: /health
-              port: 8001
-            initialDelaySeconds: 5
+              port: 8003
+            initialDelaySeconds: 3
             periodSeconds: 5
+
           livenessProbe:
             httpGet:
               path: /health
-              port: 8001
-            initialDelaySeconds: 15
+              port: 8003
+            initialDelaySeconds: 10
             periodSeconds: 10
-      affinity:
-        podAntiAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            - labelSelector:
-                matchExpressions:
-                  - key: app
-                    operator: In
-                    values:
-                      - reservas
-              topologyKey: kubernetes.io/hostname
+
 ---
 apiVersion: v1
 kind: Service
+
 metadata:
-  name: reservas-service
+  name: pagos-service
   namespace: reservas-app
+
 spec:
   selector:
-    app: reservas
+    app: pagos
+
   ports:
-    - port: 8001
-      targetPort: 8001
+    - port: 8003
+      targetPort: 8003

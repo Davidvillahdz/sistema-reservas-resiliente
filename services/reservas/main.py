@@ -17,12 +17,17 @@ from models import Reservation
 app = FastAPI(
     title="Servicio de Reservas",
     description="Servicio principal para procesar reservas de entradas.",
-    version="1.2.0",
+    version="1.3.0",
 )
 
 INVENTORY_URL = os.getenv(
     "INVENTORY_URL",
     "http://localhost:8002",
+)
+
+PAYMENT_URL = os.getenv(
+    "PAYMENT_URL",
+    "http://localhost:8003",
 )
 
 inventory_cb = AsyncCircuitBreaker(
@@ -45,7 +50,8 @@ class ReservationResponse(BaseModel):
     event_id: int
     quantity: int
     remaining_inventory: int
-    status: Literal["inventory_confirmed"]
+    payment_status: Literal["approved", "payment_pending"]
+    status: Literal["approved", "payment_pending"]
     created_at: datetime
 
 
@@ -119,6 +125,48 @@ async def call_inventory(
     raise RuntimeError("No fue posible completar la llamada a Inventario")
 
 
+async def call_payment(
+    reservation_id: str,
+    quantity: int,
+) -> Literal["approved", "payment_pending"]:
+    """
+    Consulta Pagos con un timeout corto.
+
+    Si Pagos demora demasiado, está caído o responde con error,
+    la reserva continúa con estado payment_pending.
+    """
+
+    payment_payload = {
+        "reservation_id": reservation_id,
+        "amount": float(quantity * 25),
+        "card_token": "tok_demo_1234",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            payment_response = await client.post(
+                f"{PAYMENT_URL}/payments",
+                json=payment_payload,
+            )
+
+        if payment_response.status_code != status.HTTP_201_CREATED:
+            return "payment_pending"
+
+        payment_data = payment_response.json()
+
+        if payment_data.get("status") != "approved":
+            return "payment_pending"
+
+        return "approved"
+
+    except (
+        httpx.TimeoutException,
+        httpx.RequestError,
+        ValueError,
+    ):
+        return "payment_pending"
+
+
 @app.post(
     "/reservations",
     response_model=ReservationResponse,
@@ -128,7 +176,10 @@ async def create_reservation(
     request: ReservationRequest,
 ) -> ReservationResponse:
     """
-    Crea una reserva después de confirmar y descontar inventario.
+    Crea una reserva, descuenta inventario y procesa el pago.
+
+    Si Pagos tarda demasiado, la reserva se guarda como payment_pending
+    en lugar de dejar la solicitud bloqueada durante 20 segundos.
     """
 
     inventory_endpoint = (
@@ -175,19 +226,19 @@ async def create_reservation(
             detail="El Servicio de Inventario presentó un error interno",
         ) from exc
 
-    if inventory_response.status_code == 404:
+    if inventory_response.status_code == status.HTTP_404_NOT_FOUND:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="El evento solicitado no existe",
         )
 
-    if inventory_response.status_code == 409:
+    if inventory_response.status_code == status.HTTP_409_CONFLICT:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="No existe inventario suficiente",
         )
 
-    if inventory_response.status_code != 200:
+    if inventory_response.status_code != status.HTTP_200_OK:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Respuesta inesperada del Servicio de Inventario",
@@ -198,6 +249,11 @@ async def create_reservation(
     reservation_id = uuid4()
     created_at = datetime.now(timezone.utc)
 
+    payment_status = await call_payment(
+        reservation_id=str(reservation_id),
+        quantity=request.quantity,
+    )
+
     db = SessionLocal()
 
     try:
@@ -207,7 +263,7 @@ async def create_reservation(
             customer_email=request.customer_email,
             event_id=request.event_id,
             quantity=request.quantity,
-            status="inventory_confirmed",
+            status=payment_status,
             created_at=created_at,
         )
 
@@ -232,6 +288,7 @@ async def create_reservation(
         event_id=request.event_id,
         quantity=request.quantity,
         remaining_inventory=inventory_data["remaining"],
-        status="inventory_confirmed",
+        payment_status=payment_status,
+        status=payment_status,
         created_at=created_at,
     )

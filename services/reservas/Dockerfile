@@ -9,7 +9,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY main.py .
 COPY database.py .
 COPY models.py .
-
-EXPOSE 8001
+COPY circuit_breaker.py .
 
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]

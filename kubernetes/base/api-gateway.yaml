@@ -5,6 +5,11 @@ metadata:
   namespace: reservas-app
 spec:
   replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 0
   selector:
     matchLabels:
       app: api-gateway
@@ -13,9 +18,19 @@ spec:
       labels:
         app: api-gateway
     spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                      - api-gateway
+              topologyKey: kubernetes.io/hostname
       containers:
         - name: api-gateway
-          image: sistema-reservas-resiliente-api-gateway:latest
+          image: sistema-reservas-resiliente-api-gateway:bulkhead-v1
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000
@@ -25,6 +40,15 @@ spec:
                 configMapKeyRef:
                   name: reservas-config
                   key: RESERVATION_URL
+            - name: MAX_CONCURRENT_REQUESTS
+              value: "5"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "64Mi"
+            limits:
+              cpu: "300m"
+              memory: "128Mi"
           readinessProbe:
             httpGet:
               path: /health

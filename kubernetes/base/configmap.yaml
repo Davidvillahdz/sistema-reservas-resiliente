@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: reservas-config
+  namespace: reservas-app
+data:
+  RESERVATION_URL: http://reservas-service:8001
+  INVENTORY_URL: http://inventario-service:8002
+  PAYMENT_URL: http://pagos-service:8003
+  NOTIFICATION_URL: http://notificaciones-service:8004

@@ -1,0 +1,49 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: postgres-init
+  namespace: reservas-app
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: postgres-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: postgres-init
+          image: postgres:17-alpine
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_USER
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_PASSWORD
+          command:
+            - sh
+            - -c
+            - >
+              psql
+              -h postgres-service
+              -U "$POSTGRES_USER"
+              -d "$POSTGRES_DB"
+              -f /sql/init.sql
+          volumeMounts:
+            - name: init-sql
+              mountPath: /sql
+              readOnly: true
+      volumes:
+        - name: init-sql
+          configMap:
+            name: postgres-init-sql

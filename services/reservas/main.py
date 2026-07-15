@@ -1,3 +1,4 @@
+import asyncio
 import os
 from datetime import datetime, timezone
 from typing import Literal
@@ -8,6 +9,7 @@ from fastapi import FastAPI, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import SQLAlchemyError
 
+from circuit_breaker import AsyncCircuitBreaker, CircuitOpenError
 from database import SessionLocal
 from models import Reservation
 
@@ -15,12 +17,17 @@ from models import Reservation
 app = FastAPI(
     title="Servicio de Reservas",
     description="Servicio principal para procesar reservas de entradas.",
-    version="1.1.0",
+    version="1.2.0",
 )
 
 INVENTORY_URL = os.getenv(
     "INVENTORY_URL",
     "http://localhost:8002",
+)
+
+inventory_cb = AsyncCircuitBreaker(
+    failure_threshold=3,
+    recovery_timeout=15.0,
 )
 
 
@@ -59,6 +66,59 @@ def health_check() -> dict[str, str]:
     }
 
 
+@app.get("/circuit-breaker/status")
+async def circuit_breaker_status() -> dict[str, str | int | float | None]:
+    return await inventory_cb.get_status()
+
+
+async def call_inventory(
+    endpoint: str,
+    quantity: int,
+) -> httpx.Response:
+    """
+    Consulta Inventario usando timeout, reintentos con backoff
+    y Circuit Breaker.
+    """
+
+    async def operation() -> httpx.Response:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            response = await client.post(
+                endpoint,
+                json={"quantity": quantity},
+            )
+
+        if response.status_code >= 500:
+            raise httpx.HTTPStatusError(
+                "El Servicio de Inventario presentó un error",
+                request=response.request,
+                response=response,
+            )
+
+        return response
+
+    retries = 3
+
+    for attempt in range(retries):
+        try:
+            return await inventory_cb.call(operation)
+
+        except CircuitOpenError:
+            raise
+
+        except (
+            httpx.TimeoutException,
+            httpx.RequestError,
+            httpx.HTTPStatusError,
+        ):
+            if attempt == retries - 1:
+                raise
+
+            backoff_seconds = 2**attempt
+            await asyncio.sleep(backoff_seconds)
+
+    raise RuntimeError("No fue posible completar la llamada a Inventario")
+
+
 @app.post(
     "/reservations",
     response_model=ReservationResponse,
@@ -77,22 +137,42 @@ async def create_reservation(
     )
 
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            inventory_response = await client.post(
-                inventory_endpoint,
-                json={"quantity": request.quantity},
-            )
+        inventory_response = await call_inventory(
+            endpoint=inventory_endpoint,
+            quantity=request.quantity,
+        )
+
+    except CircuitOpenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "El Servicio de Inventario está temporalmente bloqueado "
+                "por el Circuit Breaker"
+            ),
+        ) from exc
 
     except httpx.TimeoutException as exc:
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail="El Servicio de Inventario tardó demasiado en responder",
+            detail=(
+                "El Servicio de Inventario tardó demasiado en responder "
+                "después de varios intentos"
+            ),
         ) from exc
 
     except httpx.RequestError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="El Servicio de Inventario no está disponible",
+            detail=(
+                "El Servicio de Inventario no está disponible "
+                "después de varios intentos"
+            ),
+        ) from exc
+
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="El Servicio de Inventario presentó un error interno",
         ) from exc
 
     if inventory_response.status_code == 404:
@@ -105,12 +185,6 @@ async def create_reservation(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="No existe inventario suficiente",
-        )
-
-    if inventory_response.status_code >= 500:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="El Servicio de Inventario presentó un error",
         )
 
     if inventory_response.status_code != 200:

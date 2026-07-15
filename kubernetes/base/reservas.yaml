@@ -5,6 +5,11 @@ metadata:
   namespace: reservas-app
 spec:
   replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 0
   selector:
     matchLabels:
       app: reservas
@@ -15,7 +20,7 @@ spec:
     spec:
       containers:
         - name: reservas
-          image: sistema-reservas-resiliente-reservas:latest
+          image: sistema-reservas-resiliente-reservas:cb-v1
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8001

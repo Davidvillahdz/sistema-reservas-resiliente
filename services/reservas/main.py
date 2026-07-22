@@ -17,7 +17,7 @@ from models import Reservation
 app = FastAPI(
     title="Servicio de Reservas",
     description="Servicio principal para procesar reservas de entradas.",
-    version="1.3.0",
+    version="1.4.0",
 )
 
 INVENTORY_URL = os.getenv(
@@ -28,6 +28,11 @@ INVENTORY_URL = os.getenv(
 PAYMENT_URL = os.getenv(
     "PAYMENT_URL",
     "http://localhost:8003",
+)
+
+NOTIFICATION_URL = os.getenv(
+    "NOTIFICATION_URL",
+    "http://localhost:8004",
 )
 
 inventory_cb = AsyncCircuitBreaker(
@@ -51,6 +56,7 @@ class ReservationResponse(BaseModel):
     quantity: int
     remaining_inventory: int
     payment_status: Literal["approved", "payment_pending"]
+    notification_status: Literal["sent", "notification_pending"]
     status: Literal["approved", "payment_pending"]
     created_at: datetime
 
@@ -167,6 +173,48 @@ async def call_payment(
         return "payment_pending"
 
 
+async def call_notification(
+    reservation_id: str,
+    customer_email: str,
+) -> Literal["sent", "notification_pending"]:
+    """
+    Intenta enviar el correo de confirmación.
+
+    Si Notificaciones está caído, demora demasiado o responde con error,
+    la reserva continúa y el correo queda como notification_pending.
+    """
+
+    notification_payload = {
+        "reservation_id": reservation_id,
+        "customer_email": customer_email,
+        "message": "Su reserva fue registrada correctamente",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            notification_response = await client.post(
+                f"{NOTIFICATION_URL}/notifications",
+                json=notification_payload,
+            )
+
+        if notification_response.status_code != status.HTTP_201_CREATED:
+            return "notification_pending"
+
+        notification_data = notification_response.json()
+
+        if notification_data.get("status") != "sent":
+            return "notification_pending"
+
+        return "sent"
+
+    except (
+        httpx.TimeoutException,
+        httpx.RequestError,
+        ValueError,
+    ):
+        return "notification_pending"
+
+
 @app.post(
     "/reservations",
     response_model=ReservationResponse,
@@ -178,8 +226,11 @@ async def create_reservation(
     """
     Crea una reserva, descuenta inventario y procesa el pago.
 
-    Si Pagos tarda demasiado, la reserva se guarda como payment_pending
-    en lugar de dejar la solicitud bloqueada durante 20 segundos.
+    Si Pagos tarda demasiado, la reserva se guarda como payment_pending.
+
+    Después de guardar la reserva, intenta enviar la notificación.
+    Si Notificaciones no está disponible, la reserva se conserva y
+    el correo queda registrado como notification_pending.
     """
 
     inventory_endpoint = (
@@ -264,6 +315,7 @@ async def create_reservation(
             event_id=request.event_id,
             quantity=request.quantity,
             status=payment_status,
+            notification_status="notification_pending",
             created_at=created_at,
         )
 
@@ -281,6 +333,32 @@ async def create_reservation(
     finally:
         db.close()
 
+    notification_status = await call_notification(
+        reservation_id=str(reservation_id),
+        customer_email=request.customer_email,
+    )
+
+    if notification_status == "sent":
+        update_db = SessionLocal()
+
+        try:
+            saved_reservation = (
+                update_db.query(Reservation)
+                .filter(Reservation.id == reservation_id)
+                .first()
+            )
+
+            if saved_reservation is not None:
+                saved_reservation.notification_status = "sent"
+                update_db.commit()
+
+        except SQLAlchemyError:
+            update_db.rollback()
+            notification_status = "notification_pending"
+
+        finally:
+            update_db.close()
+
     return ReservationResponse(
         reservation_id=str(reservation_id),
         customer_name=request.customer_name,
@@ -289,6 +367,7 @@ async def create_reservation(
         quantity=request.quantity,
         remaining_inventory=inventory_data["remaining"],
         payment_status=payment_status,
+        notification_status=notification_status,
         status=payment_status,
         created_at=created_at,
     )

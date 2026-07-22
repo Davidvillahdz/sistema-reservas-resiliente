@@ -54,4 +54,4 @@ class Reservation(Base):
         DateTime(timezone=True),
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
-    )]
+    )
